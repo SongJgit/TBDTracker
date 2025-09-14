@@ -1,0 +1,16 @@
+# Config file of MOT17 dataset
+
+DATASET_ROOT: '/data/MOT_Datasets/SNMOT'  # your dataset root
+SPLIT: test
+CATEGORY_NAMES:  # category names to show
+  - 'player'
+
+CATEGORY_DICT:
+  0: 'player'
+
+CERTAIN_SEQS:
+  -
+IGNORE_SEQS:  # Seqs you want to ignore
+  -
+
+YAML_DICT: ''  # NOTE: ONLY for yolo v5 model loader(func DetectMultiBackend)
