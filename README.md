@@ -66,7 +66,22 @@ Learning-aided Kalman filtering Trackers are implemented based on [FilterNet](ht
 
 </div>
 </details>
+## Citation
 
+If you find this repo useful, please cite our papers.
+<a id="anchor1"></a>
+
+```bibtex
+@misc{song2025motionestimationmultiobjecttracking,
+      title={Motion Estimation for Multi-Object Tracking using KalmanNet with Semantic-Independent Encoding},
+      author={Jian Song and Wei Mei and Yunfeng Xu and Qiang Fu and Renke Kou and Lina Bu and Yucheng Long},
+      year={2025},
+      eprint={2509.11323},
+      archivePrefix={arXiv},
+      primaryClass={cs.CV},
+      url={https://arxiv.org/abs/2509.11323},
+}
+```
 ## Acknowledgement
 
 The structure of this repository and much of the code is thanks to the authors of the following repositories.
