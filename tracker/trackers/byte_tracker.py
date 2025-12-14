@@ -10,7 +10,6 @@ from .matching import linear_assignment, embedding_distance, iou_distance, fuse_
 import torch
 import torchvision.transforms as T
 from .reid_models.engine import load_reid_model, crop_and_resize
-from copy import deepcopy
 # base class
 from .basetracker import BaseTracker
 
@@ -81,7 +80,7 @@ class ByteTracker(BaseTracker):
                              cate,
                              motion=self.motion,
                              img_size=[height, width],
-                             motion_model=deepcopy(self.motion_model))
+                             motion_model=self.motion_model)
                     for (tlwh, s, cate) in zip(dets, scores_keep, cates)]
         else:
             detections = []
@@ -133,7 +132,7 @@ class ByteTracker(BaseTracker):
                          cate,
                          motion=self.motion,
                          img_size=[height, width],
-                         motion_model=deepcopy(self.motion_model))
+                         motion_model=self.motion_model)
                 for (tlwh, s, cate) in zip(dets_second, scores_second, cates_second)]
         else:
             detections_second = []

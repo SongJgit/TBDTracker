@@ -12,7 +12,7 @@ from .motion_models.sort_kalman import SORTKalman
 from .motion_models.strongsort_kalman import NSAKalman
 from .motion_models.ucmctrack_kalman import UCMCKalman
 from .motion_models.hybridsort_kalman import HybridSORTKalman
-from .motion_models.bytetrack_knet import ByteKNet
+from .motion_models.base_lakf import BaseLAKF
 
 MOTION_MODEL_DICT = {
     'sort': SORTKalman,
@@ -22,7 +22,9 @@ MOTION_MODEL_DICT = {
     'strongsort': NSAKalman,
     'ucmc': UCMCKalman,
     'hybridsort': HybridSORTKalman,
-    'byteknet': ByteKNet}
+    'bytelakf': BaseLAKF,
+    'sortlakf': BaseLAKF
+    }
 
 STATE_CONVERT_DICT = {
     'sort': 'xysa',
@@ -32,7 +34,9 @@ STATE_CONVERT_DICT = {
     'strongsort': 'xyah',
     'ucmc': 'ground',
     'hybridsort': 'xysca',
-    'byteknet': 'xywh'}
+    'bytelakf': 'xywh',
+    'sortlakf':'xywh',
+    }
 
 
 class Tracklet(BaseTrack):

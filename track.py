@@ -10,15 +10,15 @@ import argparse
 
 from tracker.utils.torch_utils import select_device
 from tracker.utils.tools import save_results
-from tracker.utils.visualization import plot_img, save_video
+from tracker.utils.visualization import plot_img, save_video, plot_img_vis
 from tracker.utils.my_timer import Timer
 from tracker.data.dataset import TestDataset
 from tracker import TRACKER_DICT
 from tracker.detectors.model import DetectModel
-from copy import deepcopy
 import os.path as osp
 
 DATA_CFG_ROOT = './cfg/data_cfg/'
+EVAL_CFG_ROOT = './cfg/eval_cfg/'
 
 
 def get_args():
@@ -53,11 +53,7 @@ def get_args():
                         type=float,
                         default=0.6,
                         help='filter new detections, larger than this thresh consider as new tracklet')
-    parser.add_argument('--match_thresh',
-                        type=float,
-                        default=0.9,
-                        help='match thresh in linear assignment first')
-
+    parser.add_argument('--match_thresh', type=float, default=0.9, help='match thresh in linear assignment first')
 
     parser.add_argument('--device', type=str, default='0', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
 
@@ -88,6 +84,8 @@ def get_args():
                         type=str,
                         default='./tracker/cam_param_files',
                         help='folder path of camera parameter files')
+
+    parser.add_argument('--eval_yaml', type=str, default=None, help='eval yaml')
 
     subparsers = parser.add_subparsers(dest='mode',
                                        required=True,
@@ -128,11 +126,9 @@ def main(args, dataset_cfgs):
     if len(args.motion_model_path) != 0:
         from filternet.utils import attempt_load_model
         motion_model = attempt_load_model(args.motion_model_path)
-        state_dict = deepcopy(motion_model.state_dict())
-        motion_model_cfgs = dict(
-            weights=state_dict,
-            motion_model=motion_model,
-        )
+        # motion_model = motion_model.to('cpu')
+        motion_model.eval()
+        motion_model_cfgs = dict(motion_model=motion_model)
     else:
         motion_model_cfgs = None
 
@@ -245,6 +241,10 @@ def main(args, dataset_cfgs):
 
             if args.save_images:
                 saved_images_path = os.path.join(save_dir, f'{SPLIT}_vis_results', 'images', seq)
+                # plot_img_vis(img=ori_img,
+                #          frame_id=frame_idx,
+                #          results=[cur_tlwh, cur_id, cur_cls],
+                #          save_dir=os.path.join(saved_images_path))
                 plot_img(img=ori_img,
                          frame_id=frame_idx,
                          results=[cur_tlwh, cur_id, cur_cls],
@@ -264,6 +264,19 @@ def main(args, dataset_cfgs):
 
     # show the average fps
     logger.info(f'average fps: {np.mean(seq_fps)}')
+
+    if args.eval_yaml is not None:
+        from run_custom_dataset_eval import main as eval_main
+        with open(osp.join(EVAL_CFG_ROOT, f'{args.eval_yaml}.yaml'), 'r') as f:
+            yaml_dataset_config = yaml.safe_load(f)
+        yaml_dataset_config['tracker_structure_config']['trackers_folder'] = save_dir
+        yaml_dataset_config['tracker_structure_config']['split_name'] = SPLIT
+        yaml_dataset_config['gt_structure_config']['train_or_test'] = SPLIT
+        eval_main(None, yaml_dataset_config)
+        print('Evaluation done')
+        print()
+        print(f'Tracked saved to {save_dir}/{SPLIT}')
+        print(f"Eval track from {yaml_dataset_config['tracker_structure_config']['trackers_folder']}/{SPLIT}")
 
 
 if __name__ == '__main__':

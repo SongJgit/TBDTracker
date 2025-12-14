@@ -232,6 +232,10 @@ class CustomDataset(_BaseDataset):
 
         return ret
 
+    def get_output_fol(self, tracker):
+        # return os.path.join(self.output_fol, tracker, self.output_sub_fol)
+        return os.path.join(tracker, self.output_sub_fol)
+
     def _get_seq_info(self):
         seq_list = []
         seq_lengths = {}

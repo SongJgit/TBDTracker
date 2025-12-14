@@ -2,7 +2,7 @@ import cv2
 import os
 import numpy as np
 from PIL import Image
-
+from mmengine.visualization import Visualizer
 
 def plot_img(img, frame_id, results, save_dir):
     """
@@ -22,8 +22,9 @@ def plot_img(img, frame_id, results, save_dir):
         img = img.squeeze(0)
 
     img_ = np.ascontiguousarray(np.copy(img))
-
+    
     tlwhs, ids, clses = results[0], results[1], results[2]
+
     for tlwh, id, cls in zip(tlwhs, ids, clses):
 
         # convert tlwh to tlbr
@@ -37,11 +38,13 @@ def plot_img(img, frame_id, results, save_dir):
             thickness=3,
         )
         # note the id and cls
-        text = f'{int(cls)}_{id}'
+        # text = f'{int(cls)}_{id}'
+        text = f'{id}'
         cv2.putText(img_,
-                    text, (tlbr[0], tlbr[1]),
+                    text, (tlbr[0]-2, tlbr[1]),
                     fontFace=cv2.FONT_HERSHEY_PLAIN,
-                    fontScale=1,
+                    fontScale=2,
+                    
                     color=(255, 164, 0),
                     thickness=2)
 
@@ -54,6 +57,36 @@ def get_color(idx):
     color = ((37 * idx) % 255, (17 * idx) % 255, (29 * idx) % 255)
 
     return color
+
+
+def plot_img_vis(img, frame_id, results, save_dir):
+    assert img is not None
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+    img_ = np.ascontiguousarray(np.copy(img))[:, :, ::-1]
+    vis = Visualizer(image=img_, fig_save_cfg=dict(frameon=False, dpi=300))
+
+    if len(results[1])!=0:
+        tlwhs, ids, clses = results[0], results[1], results[2]    
+        tlwhs = np.array(tlwhs) # [n, 4]
+        tlbrs = np.copy(tlwhs)
+        tlbrs[:, [2,3]] = tlwhs[:, [2,3]] + tlwhs[:, [0,1]]
+        tlbrs[:, 2] = np.clip(tlbrs[:, 2], 0, img_.shape[1]-1)
+        tlbrs[:, 3] = np.clip(tlbrs[:, 3], 0, img_.shape[0]-1)
+
+        ids = np.array(ids).flatten()
+        colors = np.vstack(get_color(ids)).T # [n,3]
+
+        colors = [get_color(id) for id in ids]
+        vis = Visualizer(image=img_, fig_save_cfg=dict(frameon=False, dpi=300))
+        vis.draw_bboxes(
+            bboxes = tlbrs, edge_colors=colors, line_widths=1
+        ).draw_texts(ids.tolist(), positions=tlbrs[:, [0,1]],vertical_alignments='bottom', font_families='Arial', font_sizes=8, colors=(255, 164, 0))
+    
+    # img = vis.get_image()
+    # cv2.imwrite('../forpaper/'+video_name+'/'+'{:08d}.png'.format(frame_id), img[:, :, ::-1])
+    vis.fig_save.savefig(os.path.join(save_dir, f'{frame_id:05d}.jpg'))
+    
 
 
 def save_video(save_path, images_path):
