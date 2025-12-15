@@ -59,6 +59,7 @@ def extract_combined_metrics(output_res):
                 combined = combined_data[path]['COMBINED_SEQ'][label]
                 metrics[name][path][label] = {
                     'HOTA': 100 * combined['HOTA']['HOTA'].mean(),
+                    'DetA': 100 * combined['HOTA']['DetA'].mean(),
                     'AssA': 100 * combined['HOTA']['AssA'].mean(),
                     'MOTA': 100 * combined['CLEAR']['MOTA'],
                     'IDF1': 100 * combined['Identity']['IDF1'],
@@ -66,11 +67,11 @@ def extract_combined_metrics(output_res):
     return metrics
 
 
-def main(args):
+def main(args, yaml_dataset_config):
     freeze_support()
 
-    with open(args.config_path, 'r') as f:
-        yaml_dataset_config = yaml.safe_load(f)
+    # with open(args.config_path, 'r') as f:
+    #     yaml_dataset_config = yaml.safe_load(f)
 
     # Adaptive sequence length to SEQ_INFO
     hasNone = has_None(yaml_dataset_config['SEQ_INFO'])
@@ -146,18 +147,29 @@ def main(args):
     combined_metrics = extract_combined_metrics(output_res)
 
     print(combined_metrics)
-    headers = ['Class', 'HOTA', 'AssA', 'MOTA', 'IDF1', 'IDSW']
+    headers = ['Class', 'HOTA', 'DetA', 'AssA', 'MOTA', 'IDF1', 'IDSW']
+    out_put_file = os.path.join(yaml_dataset_config['tracker_structure_config']['trackers_folder'],  
+                                yaml_dataset_config['tracker_structure_config']['split_name'], yaml_dataset_config['OUTPUT_SUB_FOLDER'], 'abstract.txt')
+    with open(out_put_file, 'a') as f:
+        f.write(','.join(map(str,  headers)) + '\n')  
     for dataset_name, dataset_metrics in combined_metrics.items():
         for path, path_metrics in dataset_metrics.items():
             for label, metrics in path_metrics.items():
                 print(f'{dataset_name} {path}')
                 print(f'TrackEval COMBINED Metrics (All Sequences Merged):{dataset_name}-{path} ')
                 table_data = [[
-                    label, f"{metrics['HOTA']:.3f}", f"{metrics['AssA']:.3f}", f"{metrics['MOTA']:.3f}",
+                    label, f"{metrics['HOTA']:.3f}", f"{metrics['DetA']:.3f}", f"{metrics['AssA']:.3f}", f"{metrics['MOTA']:.3f}",
                     f"{metrics['IDF1']:.3f}", metrics['IDSW']]]
 
                 print(tabulate(table_data, headers=headers, tablefmt='grid', stralign='center'))
 
+                with open(out_put_file, 'a') as f:
+                    f.write(','.join(
+                        [
+                    label, str(f"{metrics['HOTA']:.3f}"), str(f"{metrics['DetA']:.3f}"), str(f"{metrics['AssA']:.3f}"), str(f"{metrics['MOTA']:.3f}"),
+                    str(f"{metrics['IDF1']:.3f}"), str(metrics['IDSW'])]
+                    ) + '\n')  
+    print(f"Eval results saved to: {os.path.join(yaml_dataset_config['tracker_structure_config']['trackers_folder'],yaml_dataset_config['tracker_structure_config']['split_name'], yaml_dataset_config['OUTPUT_SUB_FOLDER'])}")
 
 if __name__ == '__main__':
 
@@ -165,5 +177,7 @@ if __name__ == '__main__':
     parser.add_argument('--config_path', type=str, default='./configs/template2.yaml', help='custom config file')
 
     args = parser.parse_args()
+    with open(args.config_path, 'r') as f:
+        yaml_dataset_config = yaml.safe_load(f)
 
-    main(args)
+    main(args, yaml_dataset_config)

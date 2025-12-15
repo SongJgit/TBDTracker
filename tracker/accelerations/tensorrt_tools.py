@@ -2,12 +2,20 @@
 
 import os
 import torch
-import tensorrt as trt
 from loguru import logger
 
 import numpy as np
 
 from collections import OrderedDict, namedtuple
+
+try:
+    import tensorrt as trt
+
+except ImportError:
+    print(
+        "Warning: tensorrt not detected.\n"
+        "To enable, install with: pip install tensorrt"
+    )
 
 
 class TensorRTConverter(object):
