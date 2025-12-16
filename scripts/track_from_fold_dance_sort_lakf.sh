@@ -2,7 +2,7 @@
 
 DATASET_CFG="dancetrack-val"
 TRACKER="sort"
-KALMAN_FORMAT="sortknet"
+KALMAN_FORMAT="sortlakf"
 MIN_AREA=150
 CONF_THRESH_LOW=0.1
 CONF_THRESH=0.5

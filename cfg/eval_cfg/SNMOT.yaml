@@ -36,8 +36,7 @@ gt_structure_config:
   gt_loc_format: '{data_root}/{split_name}/{seq_name}/{gt_folder_name}/{gt_txt_name}'
 
 tracker_structure_config:
-  # trackers_folder: '/data/Project/MOT_Methods/TBDTracker/results_tracked/snmot/bytetrack/fromdet-KF'
-  trackers_folder: '/data/Project/MOT_Methods/TBDTracker/results_tracked/snmot/bytetrack/fromdet-KNetArch2'
+  trackers_folder: './results_tracked/snmot/bytetrack/fromdet-KF'
   has_split: True
   split_name: test
   has_tracker_name: False
@@ -45,7 +44,8 @@ tracker_structure_config:
 
 
 # other options
-OUTPUT_FOLDER: './track_eval_output'   # Where to save eval results (if None  same as TRACKERS_FOLDER)
+
+OUTPUT_SUB_FOLDER: 'trackeval'   # Where to save eval results (if None  same as TRACKERS_FOLDER)
 
 SEQ_INFO:  null # seq_name: seq_length
 

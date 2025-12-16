@@ -2,10 +2,11 @@
 
 DATASET_CFG="dancetrack-val"
 TRACKER="bytetrack"
-KALMAN_FORMAT="byteknet"
+KALMAN_FORMAT="bytelakf"
 MIN_AREA=150
 CONF_THRESH_LOW=0.1
 CONF_THRESH=0.6
+MATCH_THRESH=0.9
 TRACK_BUFFER=30
 INIT_TRACK_THRESH=0.6
 DETECTED_FOLDER="./results_detected/dance/val"
@@ -24,6 +25,7 @@ python track.py \
     --conf_thresh_low "$CONF_THRESH_LOW" \
     --conf_thresh "$CONF_THRESH" \
     --track_buffer "$TRACK_BUFFER" \
+    --match_thresh "$MATCH_THRESH" \
     --init_thresh "$INIT_TRACK_THRESH" \
     --eval_yaml "$EVAL_YAML" \
     --save_folder "$SAVE_FOLDER" \
