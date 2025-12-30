@@ -118,6 +118,7 @@ sh ./scripts/eval.sh
 ```
 The evaluation results are stored in  the tracked results folder  `./results_tracked/dancetrack-val/sort/fromdet_KF/trackeval`
 
+</details>
 
 ## Benchmark
 
