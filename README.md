@@ -30,16 +30,15 @@ pip install -e .
 
 <details open>
 <summary>Usage</summary>
+For convenience, we decouple detection from tracking. This allows the detector to run only once, enabling multiple trackers to reuse the same detection results.
+This approach reduces detector inference time while ensuring consistent inputs, which benefits researchers focusing solely on tracker performance.
+Of course, detection, tracking, and evaluation can also be performed in a single pipeline. Consequently, the workflow can be organized into the following configurations:
 
-For convenience, we have separated detection and tracking. This allows detection to run only once, enabling different trackers to reuse the same detection results. This approach saves inference time for detectors while ensuring consistency, making it easier for those focused solely on tracker performance.
-Of course, detection, tracking, and evaluation can also be completed in a single step.
- Consequently, the approach can be categorized as follows:
-1. Detection + Tracking + Evaluation
-2. Detection + Tracking, Evaluation
-3. Detection, Tracking + Evaluation
+1. End-to-end: Detection → Tracking → Evaluation
+2. Two-stage: (Detection + Tracking) → Evaluation
+3. Modular: Detection (precomputed) → (Tracking + Evaluation)
+We consider the third configuration to be best practice: detections are precomputed and saved to a specified path, then used jointly by tracking and evaluation. This avoids the overhead of repeated detection inference while maintaining flexibility across different trackers.
 
-We consider the third approach to be the best practice: running detection independently while simultaneously running tracking and evaluation.
-Detections are stored for the selected detect model, which then be loaded into any tracking algorithm. Avoiding the overhead of repeatedly generating this data.
 
 </details>
 
