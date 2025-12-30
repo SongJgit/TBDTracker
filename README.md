@@ -40,8 +40,6 @@ Of course, detection, tracking, and evaluation can also be performed in a single
 We consider the third configuration to be best practice: detections are precomputed and saved to a specified path, then used jointly by tracking and evaluation. This avoids the overhead of repeated detection inference while maintaining flexibility across different trackers.
 
 
-</details>
-
 ### Preprocess
 
 #### Convert the dataset format to the required format
