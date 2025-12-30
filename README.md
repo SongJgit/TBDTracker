@@ -39,6 +39,7 @@ Of course, detection, tracking, and evaluation can also be completed in a single
 3. Detection, Tracking + Evaluation
 
 We consider the third approach to be the best practice: running detection independently while simultaneously running tracking and evaluation.
+Detections are stored for the selected detect model, which then be loaded into any tracking algorithm. Avoiding the overhead of repeatedly generating this data.
 
 </details>
 
@@ -67,7 +68,7 @@ Then perform the preceding format conversion, but note that `--data_root` needs 
 
 ### ✨ Best Practices: Detection, Tracking + Evaluation
 #### 1. Detect
-Modify the `DATASET_ROOT` parameter in `./cfg/data_cfg/dancetrack-val.yaml` to your local directory path.
+Modify the `DATASET_ROOT` parameter in `./configs/data_cfg/dancetrack-val.yaml` to your local directory path.
 
 Then run
 ```bash
@@ -76,13 +77,15 @@ sh ./scripts/dance_detect.sh
 Detection results are stored in `./results_detected/dance/val`.
 
 #### 2. Track + Evaluation
-Modify the `data_root` parameter in `./cfg/eval_cfg/DanceTrack.yaml` to your local directory path (same to `DATASET_ROOT` in `./cfg/data_cfg/dancetrack-val.yaml`).
+Modify the `data_root` parameter in `./configs/eval_cfg/DanceTrack.yaml` to your local directory path (same to `DATASET_ROOT` in `./configs/data_cfg/dancetrack-val.yaml`).
 
 Modify the `DETECTED_FOLDER` parameter in `./scripts/track_from_fold_dance_sort_kf.sh` to detection results path `./results_detected/dance/val`.
 
+Modify the tracker parameter in `./configs/tracker_cfg/sort.py` to the tracker you want to use.
+
 Then run
 ```bash
-sh ./scripts/track_from_fold_dance_sort_kf.sh
+sh ./scripts/track_from_fold_dance_sort.sh
 ```
 
 You will receive the following outputs
@@ -106,9 +109,9 @@ Tracking results and evaluation results are stored in `./results_tracked/dancetr
 
 
 ### Only Evaluation
-Modify the parameters in `./cfg/eval_cfg/DanceTrack.yaml`:
+Modify the parameters in `./configs/eval_cfg/DanceTrack.yaml`:
 ```
-data_root: Same as `DATASET_ROOT` in `./cfg/data_cfg/dancetrack-val.yaml`
+data_root: Same as `DATASET_ROOT` in `./configs/data_cfg/dancetrack-val.yaml`
 trackers_folder: The tracked results folder like  `./results_tracked/dancetrack-val/sort/fromdet_KF`
 ```
 

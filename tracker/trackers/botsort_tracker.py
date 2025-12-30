@@ -8,7 +8,8 @@ import torchvision.transforms as T
 
 from .basetrack import BaseTrack, TrackState
 from .tracklet import Tracklet, Tracklet_w_reid
-from .matching import linear_assignment, embedding_distance, fuse_det_score, iou_distance
+from .matching import iou_distance, fuse_det_score, embedding_distance, linear_assignment
+from typing import Optional, Dict, Any
 
 # for reid
 from .reid_models.engine import load_reid_model, crop_and_resize, select_device
@@ -21,24 +22,43 @@ from .basetracker import BaseTracker
 
 class BotTracker(BaseTracker):
 
-    def __init__(self, args, frame_rate=30):
+    def __init__(
+            self,
+            init_thresh: float = 0.7,
+            track_thresh_high: float = 0.6,
+            track_thresh_low: float = 0.1,
+            match_thresh: float = 0.8,
+            proximity_thresh: float = 0.5,
+            fuse_detection_score: bool = False,
+            reid_cfg: Optional[Dict[str, Any]] = None,
+            motion_format: Dict[str, Any] | str | None = 'botsort',
+            track_buffer: int = 30,
+            frame_rate: int = 30,
+            cmc_cfg: Optional[Dict[str, Any]] = dict(cmc_method='orb', downscale=4),
+    ) -> None:
 
-        super().__init__(args, frame_rate=frame_rate)
+        super().__init__(
+            init_thresh=init_thresh,
+            motion_format=motion_format,
+            track_buffer=track_buffer,
+            frame_rate=frame_rate,
+        )
 
-        self.with_reid = args.reid
+        self.track_thresh_high = track_thresh_high
+        self.track_thresh_low = track_thresh_low
+        self.match_thresh = match_thresh
+        self.fuse_detection_score = fuse_detection_score
+        self.proximity_thresh = proximity_thresh
 
-        self.reid_model = None
-        if self.with_reid:
-            self.reid_model = load_reid_model(args.reid_model,
-                                              args.reid_model_path,
-                                              device=args.device,
-                                              trt=args.trt,
-                                              crop_size=args.reid_crop_size)
-            self.reid_model.eval()
+        self.reid_cfg = reid_cfg
+        if self.reid_cfg is not None:
+            self.reid_model = load_reid_model(self.reid_cfg.reid_model,
+                                              self.reid_cfg.model_path,
+                                              device=self.reid_cfg.device,
+                                              trt=self.reid_cfg.trt,
+                                              crop_size=self.reid_cfg.crop_size)
 
-        # camera motion compensation module
-        self.gmc = GMC(method=args.cmc_method, downscale=2, verbose=None)
-
+        self.gmc = GMC(method=cmc_cfg.cmc_method, downscale=cmc_cfg.downscale, verbose=None)
         # once init, clear all trackid count to avoid large id
         BaseTrack.clear_count()
 
@@ -57,9 +77,9 @@ class BotTracker(BaseTracker):
         bboxes = output_results[:, :4]
         categories = output_results[:, -1]
 
-        remain_inds = scores > self.args.conf_thresh
-        inds_low = scores > self.args.conf_thresh_low
-        inds_high = scores < self.args.conf_thresh
+        remain_inds = scores > self.track_thresh_high
+        inds_low = scores > self.track_thresh_low
+        inds_high = scores < self.track_thresh_high
 
         inds_second = np.logical_and(inds_low, inds_high)
         dets_second = bboxes[inds_second]
@@ -71,17 +91,21 @@ class BotTracker(BaseTracker):
         scores_keep = scores[remain_inds]
         scores_second = scores[inds_second]
         """Step 1: Extract reid features"""
-        if self.with_reid:
-            features_keep = self.get_feature(tlwhs=dets[:, :4], ori_img=ori_img, crop_size=self.args.reid_crop_size)
+        if self.reid_cfg is not None:
+            features_keep = self.get_feature(tlwhs=dets[:, :4], ori_img=ori_img, crop_size=self.reid_cfg.crop_size)
+
+        height = ori_img.shape[0]
+        width = ori_img.shape[1]
 
         if len(dets) > 0:
-            if self.with_reid:
+            if self.reid_cfg is not None:
                 detections = [
-                    Tracklet_w_reid(tlwh, s, cate, motion=self.motion, feat=feat)
+                    Tracklet_w_reid(tlwh, s, cate, motion=self.motion, feat=feat, img_size=[height, width])
                     for (tlwh, s, cate, feat) in zip(dets, scores_keep, cates, features_keep)]
             else:
                 detections = [
-                    Tracklet(tlwh, s, cate, motion=self.motion) for (tlwh, s, cate) in zip(dets, scores_keep, cates)]
+                    Tracklet(tlwh, s, cate, motion=self.motion, img_size=[height, width])
+                    for (tlwh, s, cate) in zip(dets, scores_keep, cates)]
         else:
             detections = []
         ''' Add newly detected tracklets to tracked_tracklets'''
@@ -100,18 +124,20 @@ class BotTracker(BaseTracker):
             tracklet.predict()
 
         # Camera motion compensation
-        warp = self.gmc.apply(ori_img, dets)
-        self.gmc.multi_gmc(tracklet_pool, warp)
-        self.gmc.multi_gmc(unconfirmed, warp)
+        if not isinstance(self.motion, dict):
+            # KNet don't need camera motion compensation
+            warp = self.gmc.apply(ori_img, dets)
+            self.gmc.multi_gmc(tracklet_pool, warp)
+            self.gmc.multi_gmc(unconfirmed, warp)
 
         ious_dists = iou_distance(tracklet_pool, detections)
-        ious_dists_mask = (ious_dists > 0.5)  # high conf iou
+        ious_dists_mask = (ious_dists > self.proximity_thresh)  # high conf iou
 
         # fuse detection conf into iou dist
-        if self.args.fuse_detection_score:
+        if self.fuse_detection_score:
             ious_dists = fuse_det_score(ious_dists, detections)
 
-        if self.with_reid:
+        if self.reid_cfg is not None:
             # mixed cost matrix
             emb_dists = embedding_distance(tracklet_pool, detections) / 2.0
             emb_dists[emb_dists > 0.25] = 1.0
@@ -121,7 +147,7 @@ class BotTracker(BaseTracker):
         else:
             dists = ious_dists
 
-        matches, u_track, u_detection = linear_assignment(dists, thresh=0.9)
+        matches, u_track, u_detection = linear_assignment(dists, thresh=self.match_thresh)
 
         for itracked, idet in matches:
             track = tracklet_pool[itracked]
@@ -137,7 +163,7 @@ class BotTracker(BaseTracker):
         if len(dets_second) > 0:
             """Detections."""
             detections_second = [
-                Tracklet(tlwh, s, cate, motion=self.motion)
+                Tracklet(tlwh, s, cate, motion=self.motion, img_size=[height, width])
                 for (tlwh, s, cate) in zip(dets_second, scores_second, cates_second)]
         else:
             detections_second = []
@@ -163,13 +189,13 @@ class BotTracker(BaseTracker):
         '''Deal with unconfirmed tracks, usually tracks with only one beginning frame'''
         detections = [detections[i] for i in u_detection]
         ious_dists = iou_distance(unconfirmed, detections)
-        ious_dists_mask = (ious_dists > 0.5)
+        ious_dists_mask = (ious_dists > self.proximity_thresh)
 
         # fuse detection conf into iou dist
-        if self.args.fuse_detection_score:
+        if self.fuse_detection_score:
             ious_dists = fuse_det_score(ious_dists, detections)
 
-        if self.with_reid:
+        if self.reid_cfg is not None:
             emb_dists = embedding_distance(unconfirmed, detections) / 2.0
             emb_dists[emb_dists > 0.25] = 1.0
             emb_dists[ious_dists_mask] = 1.0

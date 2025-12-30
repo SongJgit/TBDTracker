@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Define parameters as uppercase variables
-DATASET="./cfg/data_cfg/dancetrack-val.yaml"
+DATASET="./configs/data_cfg/dancetrack-val.yaml"
 DETECTOR="yolox"
 WEIGHTS="./weights/detector_weights/yolox_x_dancetrack_ablation.pt"
 YOLOX_EXP_FILE="./tracker/detectors/yolox_utils/yolox_x_ablation.py"

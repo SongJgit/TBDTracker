@@ -4,6 +4,7 @@ from copy import deepcopy
 
 
 class OCSORTKalman(BaseKalman):
+    order_by_dim = False
 
     def __init__(self, ):
 

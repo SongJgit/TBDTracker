@@ -51,7 +51,7 @@ tracker_structure_config:
 
 
 # other options
-OUTPUT_FOLDER: './track_eval_output'   # Where to save eval results (if None  same as TRACKERS_FOLDER)
+OUTPUT_SUB_FOLDER: 'trackeval'    # Where to save eval results (if None  same as TRACKERS_FOLDER)
 
 SEQ_INFO:  null # seq_name: seq_length
 

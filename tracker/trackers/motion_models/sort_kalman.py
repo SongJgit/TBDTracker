@@ -5,6 +5,7 @@ from copy import deepcopy
 
 
 class SORTKalman(BaseKalman):
+    order_by_dim = False
 
     def __init__(self, ):
 

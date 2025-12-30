@@ -1,18 +1,21 @@
+from numpy.core.multiarray import zeros as zeros
 from .base_kalman import BaseKalman
 import numpy as np
+import cv2
 
 
-class ByteKalman(BaseKalman):
+class BotKalman(BaseKalman):
+    order_by_dim = False
 
     def __init__(self, ):
 
-        state_dim = 8  # [x, y, a, h, vx, vy, va, vh]
+        state_dim = 8  # [x, y, w, h, vx, vy, vw, vh]
         observation_dim = 4
 
         F = np.eye(state_dim, state_dim)
         '''
-        [1, 0, 0, 0, 1, 0, 0]
-        [0, 1, 0, 0, 0, 1, 0]
+        [1, 0, 0, 0, 1, 0, 0, 0]
+        [0, 1, 0, 0, 0, 1, 0, 0]
         ...
         '''
         for i in range(state_dim // 2):
@@ -29,7 +32,7 @@ class ByteKalman(BaseKalman):
         """init x, P, Q, R.
 
         Args:
-            observation: x-y-a-h format
+            observation: x-y-w-h format
         """
         # init x, P, Q, R
 
@@ -38,13 +41,13 @@ class ByteKalman(BaseKalman):
         self.kf.x = np.r_[mean_pos, mean_vel]  # x_{0, 0}
 
         std = [
-            2 * self._std_weight_position * observation[3],  # related to h
+            2 * self._std_weight_position * observation[2],  # related to h
             2 * self._std_weight_position * observation[3],
-            1e-2,
+            2 * self._std_weight_position * observation[2],
             2 * self._std_weight_position * observation[3],
+            10 * self._std_weight_velocity * observation[2],
             10 * self._std_weight_velocity * observation[3],
-            10 * self._std_weight_velocity * observation[3],
-            1e-5,
+            10 * self._std_weight_velocity * observation[2],
             10 * self._std_weight_velocity * observation[3], ]
 
         self.kf.P = np.diag(np.square(std))  # P_{0, 0}
@@ -57,15 +60,16 @@ class ByteKalman(BaseKalman):
         """
 
         if not is_activated:
-            # if not activated, set the velocity of h to 0
+            # if not activated, set the velocity of w and h to 0
+            self.kf.x[6] = 0.0
             self.kf.x[7] = 0.0
 
         std_pos = [
-            self._std_weight_position * self.kf.x[3], self._std_weight_position * self.kf.x[3], 1e-2,
-            self._std_weight_position * self.kf.x[3]]
+            self._std_weight_position * self.kf.x[2], self._std_weight_position * self.kf.x[3],
+            self._std_weight_position * self.kf.x[2], self._std_weight_position * self.kf.x[3]]
         std_vel = [
-            self._std_weight_velocity * self.kf.x[3], self._std_weight_velocity * self.kf.x[3], 1e-5,
-            self._std_weight_velocity * self.kf.x[3]]
+            self._std_weight_velocity * self.kf.x[2], self._std_weight_velocity * self.kf.x[3],
+            self._std_weight_velocity * self.kf.x[2], self._std_weight_velocity * self.kf.x[3]]
 
         Q = np.diag(np.square(np.r_[std_pos, std_vel]))
 
@@ -75,7 +79,7 @@ class ByteKalman(BaseKalman):
         """update step.
 
         Args:
-            z: observation x-y-a-h format
+            z: observation x-y-w-h format
 
         K_n = P_{n, n - 1} * H^T * (H P_{n, n - 1} H^T + R)^{-1}
         x_{n, n} = x_{n, n - 1} + K_n * (z - H * x_{n, n - 1})
@@ -83,8 +87,8 @@ class ByteKalman(BaseKalman):
         """
 
         std = [
-            self._std_weight_position * self.kf.x[3], self._std_weight_position * self.kf.x[3], 1e-1,
-            self._std_weight_position * self.kf.x[3]]
+            self._std_weight_position * self.kf.x[2], self._std_weight_position * self.kf.x[3],
+            self._std_weight_position * self.kf.x[2], self._std_weight_position * self.kf.x[3]]
 
         R = np.diag(np.square(std))
 

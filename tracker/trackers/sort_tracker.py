@@ -1,19 +1,34 @@
 """Sort."""
 
-import numpy as np
-from collections import deque
 from .basetrack import BaseTrack, TrackState
 from .tracklet import Tracklet
 from .matching import linear_assignment, iou_distance
 # base class
 from .basetracker import BaseTracker
+from typing import Optional, Any, Dict
 
 
 class SortTracker(BaseTracker):
 
-    def __init__(self, args, frame_rate=30, motion_model=None):
+    def __init__(
+        self,
+        init_thresh: float = 0.6,
+        track_thresh: float = 0.5,
+        match_thresh: float = 0.7,
+        motion_format: Dict[str, Any] | str | None = 'sort',
+        track_buffer: int = 30,
+        frame_rate: int = 30,
+    ) -> None:
 
-        super().__init__(args, frame_rate=frame_rate,motion_model=motion_model)
+        super().__init__(
+            init_thresh=init_thresh,
+            motion_format=motion_format,
+            track_buffer=track_buffer,
+            frame_rate=frame_rate,
+        )
+
+        self.match_thresh = match_thresh
+        self.track_thresh = track_thresh
 
         # once init, clear all trackid count to avoid large id
         BaseTrack.clear_count()
@@ -33,7 +48,7 @@ class SortTracker(BaseTracker):
         bboxes = output_results[:, :4]
         categories = output_results[:, -1]
 
-        remain_inds = scores > self.args.conf_thresh
+        remain_inds = scores > self.track_thresh
 
         dets = bboxes[remain_inds]
 
@@ -43,13 +58,11 @@ class SortTracker(BaseTracker):
         height = ori_img.shape[0]
         width = ori_img.shape[1]
 
-
         if len(dets) > 0:
             """Detections."""
             detections = [
-                Tracklet(tlwh, s, cate, motion=self.motion,
-                         img_size=[height, width],
-                            motion_model=self.motion_model)for (tlwh, s, cate) in zip(dets, scores_keep, cates)]
+                Tracklet(tlwh, s, cate, motion=self.motion, img_size=[height, width])
+                for (tlwh, s, cate) in zip(dets, scores_keep, cates)]
         else:
             detections = []
         ''' Add newly detected tracklets to tracked_tracklets'''
@@ -69,7 +82,7 @@ class SortTracker(BaseTracker):
 
         dists = iou_distance(tracklet_pool, detections)
 
-        matches, u_track, u_detection = linear_assignment(dists, thresh=self.args.match_thresh)
+        matches, u_track, u_detection = linear_assignment(dists, thresh=self.match_thresh)
 
         for itracked, idet in matches:
             track = tracklet_pool[itracked]
@@ -90,7 +103,7 @@ class SortTracker(BaseTracker):
         detections = [detections[i] for i in u_detection]
         dists = iou_distance(unconfirmed, detections)
 
-        matches, u_unconfirmed, u_detection = linear_assignment(dists, thresh=0.7)
+        matches, u_unconfirmed, u_detection = linear_assignment(dists, thresh=self.match_thresh)
 
         for itracked, idet in matches:
             unconfirmed[itracked].update(detections[idet], self.frame_id)

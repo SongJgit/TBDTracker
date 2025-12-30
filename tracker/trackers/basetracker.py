@@ -1,29 +1,35 @@
-"""Base class for every tracker, embedded some general codes like init,
-get_features and tracklet merge for code clarity."""
+# """Base class for every tracker, embedded some general codes like init,
+# get_features and tracklet merge for code clarity."""
 
 import numpy as np
 import torch
 from .reid_models.engine import crop_and_resize
 from .matching import iou_distance
+from typing import Optional, Dict, Any
 
 
 class BaseTracker(object):
 
-    def __init__(self, args, frame_rate=30, motion_model=None):
+    def __init__(
+        self,
+        init_thresh: float = 0.7,
+        motion_format: Dict[str, Any] | str | None = None,
+        track_buffer: int = 30,
+        frame_rate: int = 30,
+    ) -> None:
+
+        self.init_thresh = init_thresh
+        self.track_buffer = track_buffer
+        self.motion = motion_format
 
         self.tracked_tracklets = []  # list[Tracklet]
         self.lost_tracklets = []  # list[Tracklet]
         self.removed_tracklets = []  # list[Tracklet]
 
         self.frame_id = 0
-        self.args = args
-
-        self.init_thresh = args.init_thresh
-        self.buffer_size = int(frame_rate / 30.0 * args.track_buffer)
+        self.frame_rate = frame_rate
+        self.buffer_size = int(frame_rate / 30.0 * self.track_buffer)
         self.max_time_lost = self.buffer_size
-
-        self.motion = args.kalman_format
-        self.motion_model = motion_model
 
     def update(self, output_results, img, ori_img):
         raise NotImplementedError
@@ -96,3 +102,14 @@ class BaseTracker(object):
         resa = [t for i, t in enumerate(trackletsa) if i not in dupa]
         resb = [t for i, t in enumerate(trackletsb) if i not in dupb]
         return resa, resb
+
+    def __repr__(self):
+        """Return a string representation of the tracker."""
+        return (f'{self.__class__.__name__}('
+                f'init_thresh={self.init_thresh}, '
+                f'motion_format={self.motion!r}, '
+                f'track_buffer={self.track_buffer}, '
+                f'frame_rate={self.frame_rate}, '
+                f'frame_id={self.frame_id}, '
+                f'buffer_size={self.buffer_size}, '
+                f'max_time_lost={self.max_time_lost})')

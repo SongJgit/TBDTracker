@@ -3,6 +3,7 @@ import numpy as np
 
 
 class UCMCKalman(BaseKalman):
+    order_by_dim = False
 
     def __init__(
             self,

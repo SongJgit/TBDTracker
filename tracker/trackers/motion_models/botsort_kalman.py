@@ -5,6 +5,7 @@ import cv2
 
 
 class BotKalman(BaseKalman):
+    order_by_dim = False
 
     def __init__(self, ):
 

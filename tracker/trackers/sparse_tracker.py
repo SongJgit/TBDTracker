@@ -1,10 +1,6 @@
 """Sparse Track."""
 
 import numpy as np
-import torch
-
-import cv2
-import torchvision.transforms as T
 
 from .basetrack import BaseTrack, TrackState
 from .tracklet import Tracklet, Tracklet_w_depth
@@ -14,17 +10,41 @@ from .camera_motion_compensation.cmc import GMC
 
 # base class
 from .basetracker import BaseTracker
+from typing import Optional, Dict, Any
 
 
 class SparseTracker(BaseTracker):
 
-    def __init__(self, args, frame_rate=30):
+    def __init__(
+            self,
+            init_thresh: float = 0.75,
+            track_thresh_low: float = 0.1,
+            track_thresh_high: float = 0.7,
+            match_thresh: float = 0.85,
+            confirm_thresh: float = 0.7,
+            motion_format: Dict[str, Any] | str | None = 'sparse',
+            track_buffer: int = 60,
+            frame_rate: int = 30,
+            depth_levels_high: int = 1,
+            depth_levels_low: int = 12,
+            cmc_cfg: Optional[Dict[str, Any]] = dict(cmc_method='orb', downscale=4),
+    ) -> None:
 
-        super().__init__(args, frame_rate=frame_rate)
+        super().__init__(
+            init_thresh=init_thresh,
+            motion_format=motion_format,
+            track_buffer=track_buffer,
+            frame_rate=frame_rate,
+        )
 
-        # camera motion compensation module
-        self.gmc = GMC(method=args.cmc_method, downscale=2, verbose=None)
+        self.track_thresh_high = track_thresh_high
+        self.track_thresh_low = track_thresh_low
+        self.match_thresh = match_thresh
+        self.confirm_thresh = confirm_thresh
+        self.depth_levels_high = depth_levels_high
+        self.depth_levels_low = depth_levels_low
 
+        self.gmc = GMC(method=cmc_cfg.cmc_method, downscale=cmc_cfg.downscale, verbose=None)
         # once init, clear all trackid count to avoid large id
         BaseTrack.clear_count()
 
@@ -143,9 +163,9 @@ class SparseTracker(BaseTracker):
         bboxes = output_results[:, :4]
         categories = output_results[:, -1]
 
-        remain_inds = scores > self.args.conf_thresh
-        inds_low = scores > self.args.conf_thresh_low
-        inds_high = scores < self.args.conf_thresh
+        remain_inds = scores > self.track_thresh_high
+        inds_low = scores > self.track_thresh_low
+        inds_high = scores < self.track_thresh_high
 
         inds_second = np.logical_and(inds_low, inds_high)
         dets_second = bboxes[inds_second]
@@ -179,17 +199,18 @@ class SparseTracker(BaseTracker):
             tracklet.predict()
 
         # Camera motion compensation
-        warp = self.gmc.apply(ori_img, dets)
-        self.gmc.multi_gmc(tracklet_pool, warp)
-        self.gmc.multi_gmc(unconfirmed, warp)
+        if not isinstance(self.motion, dict):
+            warp = self.gmc.apply(ori_img, dets)
+            self.gmc.multi_gmc(tracklet_pool, warp)
+            self.gmc.multi_gmc(unconfirmed, warp)
 
         # depth cascade matching
         activated_tracklets, refind_tracklets, u_track, u_detection_high = self.DCM(detections,
                                                                                     tracklet_pool,
                                                                                     activated_tracklets,
                                                                                     refind_tracklets,
-                                                                                    levels=3,
-                                                                                    thresh=0.75,
+                                                                                    levels=self.depth_levels_high,
+                                                                                    thresh=self.match_thresh,
                                                                                     is_fuse=True)
         ''' Step 3: Second association, with low score detection boxes, depth cascade mathcing'''
         if len(dets_second) > 0:
@@ -206,7 +227,7 @@ class SparseTracker(BaseTracker):
                                                                                    r_tracked_tracklets,
                                                                                    activated_tracklets,
                                                                                    refind_tracklets,
-                                                                                   levels=3,
+                                                                                   levels=self.depth_levels_low,
                                                                                    thresh=0.3,
                                                                                    is_fuse=False)
 
@@ -218,7 +239,7 @@ class SparseTracker(BaseTracker):
         detections = u_detection_high
         dists = iou_distance(unconfirmed, detections)
 
-        matches, u_unconfirmed, u_detection = linear_assignment(dists, thresh=0.7)
+        matches, u_unconfirmed, u_detection = linear_assignment(dists, thresh=self.confirm_thresh)
 
         for itracked, idet in matches:
             unconfirmed[itracked].update(detections[idet], self.frame_id)

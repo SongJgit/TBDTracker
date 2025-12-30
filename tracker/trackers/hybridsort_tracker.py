@@ -1,24 +1,38 @@
-"""Hybrid Sort."""
-
 import numpy as np
-from collections import deque
 from .basetrack import BaseTrack, TrackState
 from .tracklet import Tracklet, Tracklet_w_velocity_four_corner
 from .matching import linear_assignment, iou_distance, association_weak_cues, hm_iou_distance, score_distance
 
 # base class
 from .basetracker import BaseTracker
+from typing import Optional, Any, Dict
 
 
 class HybridSortTracker(BaseTracker):
 
-    def __init__(self, args, frame_rate=30):
+    def __init__(
+        self,
+        init_thresh: float = 0.6,
+        track_thresh_low: float = 0.1,
+        track_thresh_high: float = 0.12442660055370669,
+        delta_t: float = 5,
+        match_thresh: float = 0.3,
+        motion_format: Dict[str, Any] | str | None = 'hybridsort',
+        track_buffer: int = 30,
+        frame_rate: int = 30,
+    ) -> None:
+        super().__init__(
+            init_thresh=init_thresh,
+            motion_format=motion_format,
+            track_buffer=track_buffer,
+            frame_rate=frame_rate,
+        )
 
-        super().__init__(args, frame_rate=frame_rate)
+        self.delta_t = delta_t
+        self.track_thresh_high = track_thresh_high
+        self.track_thresh_low = track_thresh_low
+        self.match_thresh = match_thresh
 
-        self.delta_t = 3  # observations backtrack depth
-
-        # once init, clear all trackid count to avoid large id
         BaseTrack.clear_count()
 
     @staticmethod
@@ -47,9 +61,9 @@ class HybridSortTracker(BaseTracker):
         bboxes = output_results[:, :4]
         categories = output_results[:, -1]
 
-        remain_inds = scores > self.args.conf_thresh
-        inds_low = scores > self.args.conf_thresh_low
-        inds_high = scores < self.args.conf_thresh
+        remain_inds = scores > self.track_thresh_high
+        inds_low = scores > self.track_thresh_low
+        inds_high = scores < self.track_thresh_high
 
         inds_second = np.logical_and(inds_low, inds_high)
         dets_second = bboxes[inds_second]
@@ -61,10 +75,13 @@ class HybridSortTracker(BaseTracker):
         scores_keep = scores[remain_inds]
         scores_second = scores[inds_second]
 
+        height = ori_img.shape[0]
+        width = ori_img.shape[1]
+
         if len(dets) > 0:
             """Detections."""
             detections = [
-                Tracklet_w_velocity_four_corner(tlwh, s, cate, motion=self.motion)
+                Tracklet_w_velocity_four_corner(tlwh, s, cate, motion=self.motion, img_size=[height, width])
                 for (tlwh, s, cate) in zip(dets, scores_keep, cates)]
         else:
             detections = []
@@ -113,7 +130,12 @@ class HybridSortTracker(BaseTracker):
         if len(dets_second) > 0:
             """Detections."""
             detections_second = [
-                Tracklet_w_velocity_four_corner(tlwh, s, cate, motion=self.motion)
+                Tracklet_w_velocity_four_corner(tlwh,
+                                                s,
+                                                cate,
+                                                motion=self.motion,
+                                                delta_t=self.delta_t,
+                                                img_size=[height, width])
                 for (tlwh, s, cate) in zip(dets_second, scores_second, cates_second)]
         else:
             detections_second = []

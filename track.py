@@ -1,24 +1,21 @@
 import os
 import numpy as np
 import torch
-
+from mmengine import Config, fileio
+from mmengine import MODELS, DictAction
 from tqdm import tqdm
 import yaml
-
-from loguru import logger
+from tracker.utils.logger_config import global_logger as logger
 import argparse
 
+from tracker.utils import TRACKED_RESULTS_ROOT, DATA_CFG_ROOT, EVAL_CFG_ROOT, TRACKER_CFG_ROOT
 from tracker.utils.torch_utils import select_device
 from tracker.utils.tools import save_results
 from tracker.utils.visualization import plot_img, save_video, plot_img_vis
 from tracker.utils.my_timer import Timer
 from tracker.data.dataset import TestDataset
-from tracker import TRACKER_DICT
 from tracker.detectors.model import DetectModel
 import os.path as osp
-
-DATA_CFG_ROOT = './cfg/data_cfg/'
-EVAL_CFG_ROOT = './cfg/eval_cfg/'
 
 
 def get_args():
@@ -27,69 +24,35 @@ def get_args():
     parser.add_argument('--dataset', type=str, default=None, help='mot17')
 
     parser.add_argument('--tracker', type=str, default='sort', help='sort, deepsort, etc')
-    parser.add_argument('--reid',
-                        action='store_true',
-                        help='enable reid model, work in bot, byte, ocsort and hybridsort')
-    parser.add_argument('--reid_model', type=str, default='osnet_x0_25', help='osnet or deppsort')
-    parser.add_argument('--reid_crop_size',
-                        type=int,
-                        default=[128, 64],
+    parser.add_argument('--cfg_options',
                         nargs='+',
-                        help='crop size in reid model, [h, w]')
-
-    parser.add_argument('--kalman_format',
-                        type=str,
-                        default='default',
-                        help='use what kind of Kalman, sort, deepsort, byte, etc.')
-    parser.add_argument('--conf_thresh',
-                        type=float,
-                        default=0.6,
-                        help='filter detections, serve as high conf thresh in two-stage association')
-    parser.add_argument('--conf_thresh_low',
-                        type=float,
-                        default=0.1,
-                        help='filter low conf detections, used in two-stage association')
-    parser.add_argument('--init_thresh',
-                        type=float,
-                        default=0.6,
-                        help='filter new detections, larger than this thresh consider as new tracklet')
-    parser.add_argument('--match_thresh', type=float, default=0.9, help='match thresh in linear assignment first')
-
-    parser.add_argument('--device', type=str, default='0', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
-
-    # other model path
-    parser.add_argument('--reid_model_path',
-                        type=str,
-                        default='./weights/osnet_x0_25.pth',
-                        help='path for reid model path')
+                        action=DictAction,
+                        help='override some settings in the used config, the key-value pair '
+                        'in xxx=yyy format will be merged into config file. If the value to '
+                        'be overwritten is a list, it should be like key="[a,b]" or key=a,b '
+                        'It also allows nested list/tuple values, e.g. key="[(a,b),(c,d)]" '
+                        'Note that the quotation marks are necessary and that no white space '
+                        'is allowed.')
     parser.add_argument('--motion_model_path', type=str, default=None, help='path for motion model path')
-    """other options"""
-    parser.add_argument('--fuse_detection_score', action='store_true', help='fuse detection conf with iou score')
-    parser.add_argument('--track_buffer', type=int, default=30, help='tracking buffer')
-    parser.add_argument('--gamma', type=float, default=0.1, help='param to control fusing motion and appearance dist')
+    parser.add_argument('--device', type=str, default='0', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--min_area', type=float, default=150, help='use to filter small bboxs')
-
     parser.add_argument('--save_images', action='store_true', help='save tracking results (image)')
     parser.add_argument('--save_videos', action='store_true', help='save tracking results (video)')
     parser.add_argument('--save_folder', type=str, default='track_results/{tracker_name}/{dataset_name}/{split}')
 
     parser.add_argument('--track_eval', type=bool, default=True, help='Use TrackEval to evaluate')
-
-    parser.add_argument('--cmc_method',
-                        type=str,
-                        default='orb',
-                        help='feature descriptor in camera motion compensation')
+    parser.add_argument('--classes', nargs='+', type=int, default=[0],
+                        help='filter by class: --classes 0')
+    parser.add_argument('--eval_yaml', type=str, default=None, help='eval yaml')
     """camera parameter"""
     parser.add_argument('--camera_parameter_folder',
                         type=str,
                         default='./tracker/cam_param_files',
                         help='folder path of camera parameter files')
 
-    parser.add_argument('--eval_yaml', type=str, default=None, help='eval yaml')
-
     subparsers = parser.add_subparsers(dest='mode',
                                        required=True,
-                                       help='Select the detections source, only one of them can be set.')
+                                       help='Select the detections source, file or detector.')
 
     detected_parser = subparsers.add_parser(
         'file', help='detections from detector or folder(standard MOT files format like MOT17)')
@@ -100,7 +63,7 @@ def get_args():
 
     detector_parser = subparsers.add_parser('detector', help='detections from detector')
     detector_parser.add_argument('--detector', type=str, default=None, help='yolov7, yolox, etc.')
-    detector_parser.add_argument('--conf_thrsh', type=float, default=0.1, help='filter detections')
+    detector_parser.add_argument('--det_thresh', type=float, default=0.1, help='filter detections')
     detector_parser.add_argument('--nms_thresh', type=float, default=0.45, help='thresh for NMS')
     detector_parser.add_argument('--detector_model_path', type=str, default='./weights/best.pt', help='model path')
     detector_parser.add_argument('--trace', type=bool, default=False, help='traced model of YOLO v7')
@@ -110,32 +73,30 @@ def get_args():
     detector_parser.add_argument('--trt', action='store_true', help='use tensorrt engine to detect and reid')
     detector_parser.add_argument('--img_size', type=int, default=1280, help='image size, [h, w]')
 
+
     return parser.parse_args()
 
 
-def main(args, dataset_cfgs):
-    """1. set some params"""
+def main(args, dataset_cfg):
 
     # NOTE: if save video, you must save image
     if args.save_videos:
         args.save_images = True
-    """2. load detector"""
+    """2. load detector or motion model"""
     device = select_device(args.device)
 
-    # TODO: Speed up
-    if len(args.motion_model_path) != 0:
+    if args.motion_model_path is not None and len(args.motion_model_path) != 0:
+        # load learning-aided Kalman filter
         from filternet.utils import attempt_load_model
         motion_model = attempt_load_model(args.motion_model_path)
-        # motion_model = motion_model.to('cpu')
         motion_model.eval()
-        motion_model_cfgs = dict(motion_model=motion_model)
+        motion_model_cfg = dict(type='knet', motion_model=motion_model)
     else:
-        motion_model_cfgs = None
+        motion_model_cfg = None
 
     if args.mode == 'file':
         args.detector = None
         args.img_size = None
-
     else:
         # adjust tensorrt
         if args.detector_model_path.endswith('.engine'):
@@ -147,24 +108,28 @@ def main(args, dataset_cfgs):
                                img_size=args.img_size,
                                device=device,
                                yolox_exp_file=args.yolox_exp_file,
-                               classes=dataset_cfgs['CATEGORY_NAMES'],
+                               classes=dataset_cfg['CATEGORY_NAMES'],
                                use_trt=args.use_trt)
     """3. load sequences"""
 
-    DATA_ROOT = dataset_cfgs['DATASET_ROOT']
-    SPLIT = dataset_cfgs['SPLIT']
+    DATA_ROOT = dataset_cfg['DATASET_ROOT']
+    SPLIT = dataset_cfg['SPLIT']
 
     seqs = sorted(os.listdir(os.path.join(DATA_ROOT, 'images', SPLIT)))
-    seqs = [seq for seq in seqs if seq not in dataset_cfgs['IGNORE_SEQS']]
-    if None not in dataset_cfgs['CERTAIN_SEQS']:
-        seqs = dataset_cfgs['CERTAIN_SEQS']
+    seqs = [seq for seq in seqs if seq not in dataset_cfg['IGNORE_SEQS']]
+    if None not in dataset_cfg['CERTAIN_SEQS']:
+        seqs = dataset_cfg['CERTAIN_SEQS']
 
     logger.info(f'Total {len(seqs)} seqs will be tracked: {seqs}')
 
-    save_dir = f'./results_tracked/{args.dataset}/{args.tracker}/{args.save_folder}'
-    # save_dir = args.save_dir.format(tracker_name=args.tracker, dataset_name=args.dataset, split=SPLIT)
-    """4. Tracking"""
+    # save_dir = f'./results_tracked/{args.dataset}/{args.tracker}/{args.save_folder}'
+    save_dir = osp.join(TRACKED_RESULTS_ROOT, args.dataset, args.tracker, args.save_folder)
 
+    tracker_cfg = Config.fromfile(osp.join(TRACKER_CFG_ROOT, f'{args.tracker}.py'))
+    if args.cfg_options is not None:
+        tracker_cfg.merge_from_dict(args.cfg_options)
+    logger.info(tracker_cfg.pretty_text)
+    """4. Tracking"""
     # set timer
     timer = Timer()
     seq_fps = []
@@ -193,7 +158,10 @@ def main(args, dataset_cfgs):
         # store the seq name, for conveniently reading the camera param file w.r.t. each sequence
         args.cam_param_file = os.path.join(args.camera_parameter_folder, args.dataset, seq + '.txt')
 
-        tracker = TRACKER_DICT[args.tracker](args, motion_model=motion_model_cfgs)
+        # Preloading the motion_model can save time by avoiding repeated loading.
+        if motion_model_cfg is not None:
+            tracker_cfg.tracker.motion_format = motion_model_cfg
+        tracker = MODELS.build(tracker_cfg.tracker)
 
         process_bar = enumerate(data_loader)
         process_bar = tqdm(process_bar, total=len(data_loader), ncols=150, dynamic_ncols=True)
@@ -218,6 +186,8 @@ def main(args, dataset_cfgs):
                 output = output.detach().cpu().numpy()
                 # save results
 
+            output = output[np.isin(output[:, -1], args.classes)]
+
             current_tracks = tracker.update(output, img, ori_img.cpu().numpy())
             cur_tlwh, cur_id, cur_cls, cur_score = [], [], [], []
             for trk in current_tracks:
@@ -240,15 +210,15 @@ def main(args, dataset_cfgs):
             timer.toc()
 
             if args.save_images:
-                saved_images_path = os.path.join(save_dir, f'{SPLIT}_vis_results', 'images', seq)
-                # plot_img_vis(img=ori_img,
+                saved_images_path = os.path.join(save_dir, SPLIT, 'vis_results', 'images', seq)
+                plot_img_vis(img=ori_img,
+                             frame_id=frame_idx,
+                             results=[cur_tlwh, cur_id, cur_cls],
+                             save_dir=os.path.join(saved_images_path))
+                # plot_img(img=ori_img,
                 #          frame_id=frame_idx,
                 #          results=[cur_tlwh, cur_id, cur_cls],
                 #          save_dir=os.path.join(saved_images_path))
-                plot_img(img=ori_img,
-                         frame_id=frame_idx,
-                         results=[cur_tlwh, cur_id, cur_cls],
-                         save_dir=os.path.join(saved_images_path))
 
         save_results(folder_name=os.path.join(save_dir, SPLIT), seq_name=seq, results=results)
 
@@ -273,10 +243,22 @@ def main(args, dataset_cfgs):
         yaml_dataset_config['tracker_structure_config']['split_name'] = SPLIT
         yaml_dataset_config['gt_structure_config']['train_or_test'] = SPLIT
         eval_main(None, yaml_dataset_config)
-        print('Evaluation done')
-        print()
-        print(f'Tracked saved to {save_dir}/{SPLIT}')
-        print(f"Eval track from {yaml_dataset_config['tracker_structure_config']['trackers_folder']}/{SPLIT}")
+        logger.info('Evaluation done')
+        logger.info(f'Tracked results saved to {save_dir}/{SPLIT}')
+        logger.info(f"Eval track from {yaml_dataset_config['tracker_structure_config']['trackers_folder']}/{SPLIT}")
+
+    if not osp.exists(os.path.join(save_dir, SPLIT, 'configs')):
+        os.makedirs(os.path.join(save_dir, SPLIT, 'configs'))
+
+    if motion_model_cfg is not None:
+        tracker_cfg.tracker.motion_format.motion_model = args.motion_model_path
+    tracker_cfg.dump(os.path.join(save_dir, SPLIT, 'configs', 'tracker_cfg.py'))
+    fileio.dump(dataset_cfg, os.path.join(save_dir, SPLIT, 'configs', 'dataset_cfg.yaml'))
+    if args.eval_yaml is not None:
+        fileio.dump(yaml_dataset_config, os.path.join(save_dir, SPLIT, 'configs', 'eval.yaml'))
+    logger.info(f'Save configs to {save_dir}/{SPLIT}/configs\n'
+                f'Total time: {timer.total_time:.2f}s\n'
+                f'All done')
 
 
 if __name__ == '__main__':

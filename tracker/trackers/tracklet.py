@@ -2,7 +2,8 @@
 
 import numpy as np
 from collections import deque
-from typing import Optional, Any
+from typing import Optional, Any, Type
+from dataclasses import dataclass
 
 from .basetrack import BaseTrack, TrackState
 from .motion_models.bytetrack_kalman import ByteKalman
@@ -12,36 +13,32 @@ from .motion_models.sort_kalman import SORTKalman
 from .motion_models.strongsort_kalman import NSAKalman
 from .motion_models.ucmctrack_kalman import UCMCKalman
 from .motion_models.hybridsort_kalman import HybridSORTKalman
+from .motion_models.tracktrack_kalman import TrackTrackKalman
 from .motion_models.base_lakf import BaseLAKF
 
-MOTION_MODEL_DICT = {
-    'sort': SORTKalman,
-    'byte': ByteKalman,
-    'bot': BotKalman,
-    'ocsort': OCSORTKalman,
-    'strongsort': NSAKalman,
-    'ucmc': UCMCKalman,
-    'hybridsort': HybridSORTKalman,
-    'bytelakf': BaseLAKF,
-    'sortlakf': BaseLAKF
-    }
+@dataclass
+class MotionModelConfig:
+    model_class: Type[Any]
+    state_format: str
 
-STATE_CONVERT_DICT = {
-    'sort': 'xysa',
-    'byte': 'xyah',
-    'bot': 'xywh',
-    'ocsort': 'xysa',
-    'strongsort': 'xyah',
-    'ucmc': 'ground',
-    'hybridsort': 'xysca',
-    'bytelakf': 'xywh',
-    'sortlakf':'xywh',
-    }
+
+MOTION_CONFIGS = {
+    'sort': MotionModelConfig(SORTKalman, 'xysa'),
+    'byte': MotionModelConfig(ByteKalman, 'xyah'),
+    'botsort': MotionModelConfig(BotKalman, 'xywh'),
+    'ocsort': MotionModelConfig(OCSORTKalman, 'xysa'),
+    'strongsort': MotionModelConfig(NSAKalman, 'xyah'),
+    'sparse': MotionModelConfig(BotKalman, 'xywh'),
+    'ucmc': MotionModelConfig(UCMCKalman, 'ground'),
+    'tracktrack': MotionModelConfig(TrackTrackKalman, 'xywh'),
+    'hybridsort': MotionModelConfig(HybridSORTKalman, 'xysca'),
+    'improassoc': MotionModelConfig(BotKalman, 'xywh'),
+    'knet': MotionModelConfig(BaseLAKF, 'xywh'), }
 
 
 class Tracklet(BaseTrack):
 
-    def __init__(self, tlwh, score, category, motion='byte', img_size: Optional[Any] = None, motion_model=None):
+    def __init__(self, tlwh, score, category, motion='byte', img_size: Optional[Any] = None):
 
         # initial position
         self._tlwh = np.asarray(tlwh, dtype=np.float32)
@@ -51,24 +48,33 @@ class Tracklet(BaseTrack):
         self.category = category
 
         # kalman
-        self.motion = motion
+        self._init_motion_model(motion, img_size)
+        # self.motion = motion
 
+    def _init_motion_model(self, motion: str = 'byte', img_size=None):
+
+        self.is_hybridsort_kalman = motion == 'hybridsort'
         try:
-            if motion_model is not None:
-                self.kalman_filter = MOTION_MODEL_DICT[motion](img_size=img_size, motion_model=motion_model)
-            else:
-                self.kalman_filter = MOTION_MODEL_DICT[motion]()
+            if isinstance(motion, str):
+                self.motion_config = MOTION_CONFIGS[motion]
+                self.motion_model = self.motion_config.model_class()
+            elif isinstance(motion, dict):
+                # for KNet model
+                self.motion_config = MOTION_CONFIGS[motion['type']]
+                self.motion_model = self.motion_config.model_class(img_size=img_size,
+                                                                   motion_model=motion['motion_model'])
+
         except Exception as e:
-            raise ValueError(
-                f'Unknown motion model {motion}, please select from {list(MOTION_MODEL_DICT.keys())} and {e}')
+            raise ValueError(f'Unknown motion model {motion}, please select from {list(MOTION_CONFIGS.keys())} and {e}')
 
-        self.convert_func = self.__getattribute__('tlwh_to_' + STATE_CONVERT_DICT[motion])
+        self.convert_func = self.__getattribute__('tlwh_to_' + self.motion_config.state_format)
 
+        init_measurement = np.r_[self._tlwh, self.score] if self.is_hybridsort_kalman else self._tlwh
         # init kalman
-        self.kalman_filter.initialize(self.convert_func(self._tlwh))
+        self.motion_model.initialize(self.convert_func(init_measurement))
 
     def predict(self):
-        self.kalman_filter.predict(is_activated=self.state == TrackState.Tracked)
+        self.motion_model.predict(is_activated=self.state == TrackState.Tracked)
         self.time_since_update += 1
 
     def activate(self, frame_id):
@@ -84,7 +90,7 @@ class Tracklet(BaseTrack):
         self.frame_id = frame_id
 
         # TODO different convert
-        self.kalman_filter.update(self.convert_func(new_track.tlwh))
+        self.motion_model.update(self.convert_func(new_track.tlwh))
 
         self.state = TrackState.Tracked
         self.is_activated = True
@@ -99,7 +105,7 @@ class Tracklet(BaseTrack):
         new_tlwh = new_track.tlwh
         self.score = new_track.score
 
-        self.kalman_filter.update(self.convert_func(new_tlwh))
+        self.motion_model.update(self.convert_func(new_tlwh))
 
         self.state = TrackState.Tracked
         self.is_activated = True
@@ -110,23 +116,23 @@ class Tracklet(BaseTrack):
     def tlwh(self):
         """Get current position in bounding box format `(top left x, top left
         y, width, height)`."""
-        return self.__getattribute__(STATE_CONVERT_DICT[self.motion] + '_to_tlwh')()
+        return self.__getattribute__(self.motion_config.state_format + '_to_tlwh')()
 
     def xyah_to_tlwh(self, ):
-        x = self.kalman_filter.kf.x
+        x = self.motion_model.kf.x
         ret = x[:4].copy()
         ret[2] *= ret[3]
         ret[:2] -= ret[2:] / 2
         return ret
 
     def xywh_to_tlwh(self, ):
-        x = self.kalman_filter.kf.x
+        x = self.motion_model.kf.x
         ret = x[:4].copy()
         ret[:2] -= ret[2:] / 2
         return ret
 
     def xysa_to_tlwh(self, ):
-        x = self.kalman_filter.kf.x
+        x = self.motion_model.kf.x
         ret = x[:4].copy()
         ret[2] = np.sqrt(x[2] * x[3])
         ret[3] = x[2] / ret[2]
@@ -136,7 +142,7 @@ class Tracklet(BaseTrack):
 
     def partxywh_to_tlwh(self, ):
         # [cx, cx', cx'', cy, cy', cy'', w, w', w'', h, h', h'']
-        x = self.kalman_filter.kf.x
+        x = self.motion_model.kf.x
         ret = x[[0, 3, 6, 9]].copy()
         ret[:2] -= ret[2:] / 2
         return ret
@@ -149,12 +155,64 @@ class Tracklet(BaseTrack):
         ret[:2] += ret[2:] / 2
         return ret
 
+    def cvca_to_tlwh(self):
+        # [cx, cx', cx'', cy, cy', cy'', w, w', w'', h, h', h'']
+        x = self.motion_model.kf.x
+        ret = x[[0, 3, 6, 9]].copy()
+        ret[:2] -= ret[2:] / 2
+        return ret
+
+    @staticmethod
+    def tlwh_to_cvca(tlwh):
+        """Convert bounding box to format `(center x, center y, width,
+        height)`."""
+        ret = np.asarray(tlwh).copy()
+        ret[:2] += ret[2:] / 2
+        return ret
+
+    def stca_to_tlwh(self):
+        return self.cvca_to_tlwh()
+
+    @staticmethod
+    def tlwh_to_stca(tlwh):
+        """Convert bounding box to format `(center x, center y, width,
+        height)`."""
+        ret = np.asarray(tlwh).copy()
+        ret[:2] += ret[2:] / 2
+        return ret
+
+    def stcvca_to_tlwh(self):
+        return self.cvca_to_tlwh()
+
+    @staticmethod
+    def tlwh_to_stcvca(tlwh):
+        """Convert bounding box to format `(center x, center y, width,
+        height)`."""
+        ret = np.asarray(tlwh).copy()
+        ret[:2] += ret[2:] / 2
+        return ret
+
+    def stcv_to_tlwh(self):
+        # [cx, cx', cy, cy', w, w', h, h']
+        x = self.motion_model.kf.x
+        ret = x[[0, 2, 4, 6]].copy()
+        ret[:2] -= ret[2:] / 2
+        return ret
+
+    @staticmethod
+    def tlwh_to_stcv(tlwh):
+        """Convert bounding box to format `(center x, center y, width,
+        height)`."""
+        ret = np.asarray(tlwh).copy()
+        ret[:2] += ret[2:] / 2
+        return ret
+
 
 class Tracklet_w_reid(Tracklet):
     """Tracklet class with reid features, for botsort, deepsort, etc."""
 
-    def __init__(self, tlwh, score, category, motion='byte', feat=None, feat_history=50):
-        super().__init__(tlwh, score, category, motion)
+    def __init__(self, tlwh, score, category, motion='byte', feat=None, feat_history=50, img_size=None):
+        super().__init__(tlwh, score, category, motion, img_size)
 
         self.smooth_feat = None  # EMA feature
         self.curr_feat = None  # current feature
@@ -181,10 +239,10 @@ class Tracklet_w_reid(Tracklet):
     def re_activate(self, new_track, frame_id, new_id=False):
 
         # TODO different convert
-        if isinstance(self.kalman_filter, NSAKalman):
-            self.kalman_filter.update(self.convert_func(new_track.tlwh), new_track.score)
+        if isinstance(self.motion_model, NSAKalman):
+            self.motion_model.update(self.convert_func(new_track.tlwh), new_track.score)
         else:
-            self.kalman_filter.update(self.convert_func(new_track.tlwh))
+            self.motion_model.update(self.convert_func(new_track.tlwh))
 
         if new_track.curr_feat is not None:
             self.update_features(new_track.curr_feat)
@@ -202,10 +260,10 @@ class Tracklet_w_reid(Tracklet):
         new_tlwh = new_track.tlwh
         self.score = new_track.score
 
-        if isinstance(self.kalman_filter, NSAKalman):
-            self.kalman_filter.update(self.convert_func(new_tlwh), self.score)
+        if isinstance(self.motion_model, NSAKalman):
+            self.motion_model.update(self.convert_func(new_tlwh), self.score)
         else:
-            self.kalman_filter.update(self.convert_func(new_tlwh))
+            self.motion_model.update(self.convert_func(new_tlwh))
 
         self.state = TrackState.Tracked
         self.is_activated = True
@@ -227,8 +285,9 @@ class Tracklet_w_velocity(Tracklet):
                  delta_t=3,
                  feat=None,
                  feat_history=50,
-                 det_conf_thresh=0.1):
-        super().__init__(tlwh, score, category, motion)
+                 det_conf_thresh=0.1,
+                 img_size=None):
+        super().__init__(tlwh, score, category, motion, img_size)
 
         self.last_observation = np.array([-1, -1, -1, -1, -1])  # placeholder
         self.observations = dict()
@@ -270,7 +329,7 @@ class Tracklet_w_velocity(Tracklet):
         directly return the last observation (so is called observation-centric)
         """
         if self.last_observation.sum() < 0:  # no last observation
-            return self.__getattribute__(STATE_CONVERT_DICT[self.motion] + '_to_tlwh')()
+            return self.__getattribute__(self.motion_config.state_format + '_to_tlwh')()
 
         return self.tlbr_to_tlwh(self.last_observation[:4])
 
@@ -283,7 +342,7 @@ class Tracklet_w_velocity(Tracklet):
         return speed / norm
 
     def predict(self):
-        self.kalman_filter.predict(is_activated=self.state == TrackState.Tracked)
+        self.motion_model.predict(is_activated=self.state == TrackState.Tracked)
 
         self.age += 1
         self.time_since_update += 1
@@ -294,7 +353,7 @@ class Tracklet_w_velocity(Tracklet):
         new_tlwh = new_track.tlwh
         self.score = new_track.score
 
-        self.kalman_filter.update(self.convert_func(new_tlwh))
+        self.motion_model.update(self.convert_func(new_tlwh))
 
         self.state = TrackState.Tracked
         self.is_activated = True
@@ -337,6 +396,7 @@ class Tracklet_w_velocity_four_corner(Tracklet):
                  motion='byte',
                  delta_t=3,
                  score_thresh=0.4,
+                 img_size=None,
                  feat=None,
                  feat_history=50,
                  enable_state_new=False):
@@ -347,16 +407,7 @@ class Tracklet_w_velocity_four_corner(Tracklet):
         self.score = score
         self.category = category
 
-        # kalman
-        self.motion = motion
-        self.kalman_filter = MOTION_MODEL_DICT[motion]()
-
-        self.convert_func = self.__getattribute__('tlwh_to_' + STATE_CONVERT_DICT[motion])
-
-        # init kalman
-        self.is_hybridsort_kalman = motion == 'hybridsort'  # for generalization
-        init_measurement = np.r_[self._tlwh, self.score] if self.is_hybridsort_kalman else self._tlwh
-        self.kalman_filter.initialize(self.convert_func(init_measurement))  # confidence score is additional
+        self._init_motion_model(motion, img_size)
 
         self.last_observation = np.array([-1, -1, -1, -1, -1])  # placeholder
         self.observations = dict()
@@ -404,7 +455,7 @@ class Tracklet_w_velocity_four_corner(Tracklet):
         directly return the last observation
         """
         if self.last_observation.sum() < 0:  # no last observation
-            return self.__getattribute__(STATE_CONVERT_DICT[self.motion] + '_to_tlwh')()
+            return self.__getattribute__(self.motion_config.state_format + '_to_tlwh')()
 
         return self.tlbr_to_tlwh(self.last_observation[:4])
 
@@ -423,7 +474,7 @@ class Tracklet_w_velocity_four_corner(Tracklet):
         return speed / norm
 
     def predict(self):
-        self.kalman_filter.predict(is_activated=self.state == TrackState.Tracked)
+        self.motion_model.predict(is_activated=self.state == TrackState.Tracked)
 
         self.age += 1
         self.time_since_update += 1
@@ -442,7 +493,11 @@ class Tracklet_w_velocity_four_corner(Tracklet):
         self.score = new_track.score
 
         update_measurement = np.r_[new_tlwh, new_track.score] if self.is_hybridsort_kalman else new_tlwh
-        self.kalman_filter.update(self.convert_func(update_measurement))
+
+        if isinstance(self.motion_model, (NSAKalman, TrackTrackKalman)):
+            self.motion_model.update(self.convert_func(new_tlwh), self.score)
+        else:
+            self.motion_model.update(self.convert_func(update_measurement))
 
         self.is_activated = True
         self.time_since_update = 0
@@ -495,7 +550,11 @@ class Tracklet_w_velocity_four_corner(Tracklet):
     def re_activate(self, new_track, frame_id, new_id=False):
 
         update_measurement = np.r_[new_track.tlwh, new_track.score] if self.is_hybridsort_kalman else new_track.tlwh
-        self.kalman_filter.update(self.convert_func(update_measurement))
+
+        if isinstance(self.motion_model, (NSAKalman, TrackTrackKalman)):
+            self.motion_model.update(self.convert_func(new_track.tlwh), new_track.score)
+        else:
+            self.motion_model.update(self.convert_func(update_measurement))
 
         self.state = TrackState.Tracked
         self.is_activated = True
@@ -534,11 +593,11 @@ class Tracklet_w_velocity_four_corner(Tracklet):
     @property
     def kalman_score(self, ):
         # return kalman-predicted score
-        return np.clip(self.kalman_filter.kf.x[3], self.score_thresh, 1.0)
+        return np.clip(self.motion_model.kf.x[3], self.score_thresh, 1.0)
 
     def xysca_to_tlwh(self, ):
         # used in @property tlwh()
-        x = self.kalman_filter.kf.x
+        x = self.motion_model.kf.x
         ret = x[:5].copy()
         ret[3], ret[4] = ret[4], ret[3]
         ret = ret[:4]  # xysa
@@ -608,7 +667,7 @@ class Tracklet_w_bbox_buffer(Tracklet):
     def re_activate(self, new_track, frame_id, new_id=False):
 
         # TODO different convert
-        self.kalman_filter.update(self.convert_func(new_track.tlwh))
+        self.motion_model.update(self.convert_func(new_track.tlwh))
 
         self.state = TrackState.Tracked
         self.is_activated = True
@@ -652,7 +711,7 @@ class Tracklet_w_bbox_buffer(Tracklet):
         new_tlwh = new_track.tlwh
         self.score = new_track.score
 
-        # self.kalman_filter.update(self.convert_func(new_tlwh))  # no need to use Kalman Filter
+        # self.motion_model.update(self.convert_func(new_tlwh))  # no need to use Kalman Filter
 
         self.state = TrackState.Tracked
         self.is_activated = True
@@ -677,8 +736,8 @@ class Tracklet_w_depth(Tracklet):
     tracklet with depth info (i.e., 2000 - y2), for SparseTrack
     """
 
-    def __init__(self, tlwh, score, category, motion='byte'):
-        super().__init__(tlwh, score, category, motion)
+    def __init__(self, tlwh, score, category, motion='byte', img_size=None):
+        super().__init__(tlwh, score, category, motion, img_size=img_size)
 
     @property
     # @jit(nopython=True)
@@ -715,19 +774,19 @@ class Tracklet_w_UCMC(Tracklet):
 
         self.score = score
         self.category = category
-
+        config = MOTION_CONFIGS[motion]
         # kalman
         self.motion = motion
-        self.kalman_filter = MOTION_MODEL_DICT[motion](**self.configs)
+        self.motion_model = config.model_class(**self.configs)
 
-        self.convert_func = self.__getattribute__('tlwh_to_' + STATE_CONVERT_DICT[motion])
+        self.convert_func = self.__getattribute__('tlwh_to_' + config.state_format)
 
         # init kalman
         self.ground_xy, self.sigma_ground_xy = self.convert_func(self._tlwh)  # save as property variable
-        self.kalman_filter.initialize(observation=self.ground_xy, R=self.sigma_ground_xy)
+        self.motion_model.initialize(observation=self.ground_xy, R=self.sigma_ground_xy)
 
     def ground_to_tlwh(self, ):
-        x_vector = self.kalman_filter.kf.x
+        x_vector = self.motion_model.kf.x
         x, y = x_vector[0, 0], x_vector[2, 0]  # get ground coordinate
 
         ground_xy = np.array([x, y, 1])
@@ -773,9 +832,9 @@ class Tracklet_w_UCMC(Tracklet):
         8)
         """
 
-        diff = det_ground_xy[:, None] - np.dot(self.kalman_filter.kf.H, self.kalman_filter.kf.x)  # match the dimension
-        S = np.dot(self.kalman_filter.kf.H, np.dot(self.kalman_filter.kf.P,
-                                                   self.kalman_filter.kf.H.T)) + det_sigma_ground_xy
+        diff = det_ground_xy[:, None] - np.dot(self.motion_model.kf.H, self.motion_model.kf.x)  # match the dimension
+        S = np.dot(self.motion_model.kf.H, np.dot(self.motion_model.kf.P,
+                                                  self.motion_model.kf.H.T)) + det_sigma_ground_xy
 
         SI = np.linalg.inv(S)
         mahalanobis = np.dot(diff.T, np.dot(SI, diff))
@@ -787,7 +846,7 @@ class Tracklet_w_UCMC(Tracklet):
 
         self.score = new_track.score
 
-        self.kalman_filter.update(z=new_track.ground_xy, R=new_track.sigma_ground_xy)
+        self.motion_model.update(z=new_track.ground_xy, R=new_track.sigma_ground_xy)
 
         self.state = TrackState.Tracked
         self.is_activated = True
@@ -799,7 +858,7 @@ class Tracklet_w_UCMC(Tracklet):
     def re_activate(self, new_track, frame_id, new_id=False):
 
         # TODO different convert
-        self.kalman_filter.update(z=new_track.ground_xy, R=new_track.sigma_ground_xy)
+        self.motion_model.update(z=new_track.ground_xy, R=new_track.sigma_ground_xy)
 
         self.state = TrackState.Tracked
         self.is_activated = True

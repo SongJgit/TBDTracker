@@ -1,38 +1,49 @@
-"""OC Sort."""
-
 import numpy as np
-from collections import deque
 from .basetrack import BaseTrack, TrackState
 from .tracklet import Tracklet, Tracklet_w_velocity
 from .matching import linear_assignment, iou_distance, observation_centric_association, \
     observation_centric_association_w_reid, embedding_distance, ious
+from .reid_models.engine import load_reid_model
 
-# for reid
-import torch
-import torchvision.transforms as T
-from .reid_models.engine import load_reid_model, crop_and_resize
-
-# base class
 from .basetracker import BaseTracker
+from typing import Optional, Dict, Any
 
 
 class OCSortTracker(BaseTracker):
 
-    def __init__(self, args, frame_rate=30, motion_model=None):
+    def __init__(
+        self,
+        init_thresh: float = 0.6,
+        track_thresh_low: float = 0.1,
+        track_thresh_high: float = 0.6,
+        delta_t: float = 3,
+        reid_cfg: Optional[Dict[str, Any]] = None,
+        match_thresh: float = 0.3,
+        motion_format: Dict[str, Any] | str | None = 'ocsort',
+        track_buffer: int = 30,
+        frame_rate: int = 30,
+    ) -> None:
 
-        super().__init__(args, frame_rate=frame_rate, motion_model=motion_model)
+        super().__init__(
+            init_thresh=init_thresh,
+            motion_format=motion_format,
+            track_buffer=track_buffer,
+            frame_rate=frame_rate,
+        )
 
-        self.delta_t = 3
+        self.delta_t = delta_t
+        self.track_thresh_high = track_thresh_high
+        self.track_thresh_low = track_thresh_low
+        self.match_thresh = match_thresh
 
-        # whether to use reid
-        self.with_reid = args.reid
-        self.reid_model = None
-        if self.with_reid:
-            self.reid_model = load_reid_model(args.reid_model,
-                                              args.reid_model_path,
-                                              device=args.device,
-                                              trt=args.trt,
-                                              crop_size=args.reid_crop_size)
+        self.reid_cfg = reid_cfg
+        if self.reid_cfg is not None:
+            self.reid_model = load_reid_model(self.reid_cfg.reid_model,
+                                              self.reid_cfg.model_path,
+                                              device=self.reid_cfg.device,
+                                              trt=self.reid_cfg.trt,
+                                              crop_size=self.reid_cfg.crop_size)
+            self.reid_model.eval()
 
         # once init, clear all trackid count to avoid large id
         BaseTrack.clear_count()
@@ -63,9 +74,9 @@ class OCSortTracker(BaseTracker):
         bboxes = output_results[:, :4]
         categories = output_results[:, -1]
 
-        remain_inds = scores > self.args.conf_thresh
-        inds_low = scores > self.args.conf_thresh_low
-        inds_high = scores < self.args.conf_thresh
+        remain_inds = scores > self.track_thresh_high
+        inds_low = scores > self.track_thresh_low
+        inds_high = scores < self.track_thresh_high
 
         inds_second = np.logical_and(inds_low, inds_high)
         dets_second = bboxes[inds_second]
@@ -76,23 +87,26 @@ class OCSortTracker(BaseTracker):
 
         scores_keep = scores[remain_inds]
         scores_second = scores[inds_second]
+
+        height = ori_img.shape[0]
+        width = ori_img.shape[1]
         """Step 1: Extract reid features"""
-        if self.with_reid:
-            features_keep = self.get_feature(tlwhs=dets[:, :4], ori_img=ori_img, crop_size=self.args.reid_crop_size)
+        if self.reid_cfg is not None:
+            features_keep = self.get_feature(tlwhs=dets[:, :4], ori_img=ori_img, crop_size=self.reid_cfg.crop_size)
             features_second = self.get_feature(tlwhs=dets_second[:, :4],
                                                ori_img=ori_img,
-                                               crop_size=self.args.reid_crop_size)
+                                               crop_size=self.reid_cfg.crop_size)
             # in deep oc sort, low conf detections also need reid features
 
         if len(dets) > 0:
             """Detections."""
-            if self.with_reid:
+            if self.reid_cfg is not None:
                 detections = [
-                    Tracklet_w_velocity(tlwh, s, cate, motion=self.motion, feat=feat)
+                    Tracklet_w_velocity(tlwh, s, cate, motion=self.motion, feat=feat, img_size=[height, width])
                     for (tlwh, s, cate, feat) in zip(dets, scores_keep, cates, features_keep)]
             else:
                 detections = [
-                    Tracklet_w_velocity(tlwh, s, cate, motion=self.motion)
+                    Tracklet_w_velocity(tlwh, s, cate, motion=self.motion, img_size=[height, width])
                     for (tlwh, s, cate) in zip(dets, scores_keep, cates)]
         else:
             detections = []
@@ -121,10 +135,10 @@ class OCSortTracker(BaseTracker):
             tracklet.predict()
 
         # Observation centric cost matrix and assignment
-        if self.with_reid:
+        if self.reid_cfg is not None:
             matches, u_track, u_detection = observation_centric_association_w_reid(tracklets=tracklet_pool,
                                                                                    detections=detections,
-                                                                                   iou_threshold=0.3,
+                                                                                   iou_threshold=self.match_thresh,
                                                                                    velocities=velocities,
                                                                                    previous_obs=k_observations,
                                                                                    vdc_weight=0.05)
@@ -132,7 +146,7 @@ class OCSortTracker(BaseTracker):
         else:
             matches, u_track, u_detection = observation_centric_association(tracklets=tracklet_pool,
                                                                             detections=detections,
-                                                                            iou_threshold=0.3,
+                                                                            iou_threshold=self.match_thresh,
                                                                             velocities=velocities,
                                                                             previous_obs=k_observations,
                                                                             vdc_weight=0.05)
@@ -150,13 +164,24 @@ class OCSortTracker(BaseTracker):
         # association the untrack to the low score detections
         if len(dets_second) > 0:
             """Detections."""
-            if self.with_reid:
+            if self.reid_cfg is not None:
                 detections_second = [
-                    Tracklet_w_velocity(tlwh, s, cate, motion=self.motion, feat=feat)
+                    Tracklet_w_velocity(tlwh,
+                                        s,
+                                        cate,
+                                        motion=self.motion,
+                                        feat=feat,
+                                        delta_t=self.delta_t,
+                                        img_size=[height, width])
                     for (tlwh, s, cate, feat) in zip(dets_second, scores_second, cates_second, features_second)]
             else:
                 detections_second = [
-                    Tracklet_w_velocity(tlwh, s, cate, motion=self.motion)
+                    Tracklet_w_velocity(tlwh,
+                                        s,
+                                        cate,
+                                        motion=self.motion,
+                                        delta_t=self.delta_t,
+                                        img_size=[height, width])
                     for (tlwh, s, cate) in zip(dets_second, scores_second, cates_second)]
         else:
             detections_second = []
@@ -164,7 +189,7 @@ class OCSortTracker(BaseTracker):
         r_tracked_tracklets = [tracklet_pool[i] for i in u_track if tracklet_pool[i].state == TrackState.Tracked]
 
         dists = 1. - iou_distance(r_tracked_tracklets, detections_second)
-        if self.with_reid:  # for low confidence detections, we also use reid and add directly
+        if self.reid_cfg is not None:  # for low confidence detections, we also use reid and add directly
             # note that embedding_distance calculate the 1. - cosine, not cosine
             emb_dists = 1. - embedding_distance(r_tracked_tracklets, detections_second, metric='cosine')
             dists = dists + emb_dists

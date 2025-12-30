@@ -2,7 +2,7 @@
 
 # Define parameters as uppercase variables
 # CONFIG_PATH="cfg/eval_cfg/AntiUAV.yaml"
-CONFIG_PATH="cfg/eval_cfg/DanceTrack.yaml"
+CONFIG_PATH="configs/eval_cfg/DanceTrack.yaml"
 # CONFIG_PATH="cfg/eval_cfg/SNMOT.yaml"
 
 # Run custom dataset evaluation script
