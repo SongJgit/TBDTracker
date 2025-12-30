@@ -87,7 +87,11 @@ def main(args, dataset_cfg):
 
     if args.motion_model_path is not None and len(args.motion_model_path) != 0:
         # load learning-aided Kalman filter
-        from filternet.utils import attempt_load_model
+        try: 
+            from filternet.utils import attempt_load_model
+        except:
+            raise ImportError('filternet not installed.')
+            
         motion_model = attempt_load_model(args.motion_model_path)
         motion_model.eval()
         motion_model_cfg = dict(type='knet', motion_model=motion_model)
