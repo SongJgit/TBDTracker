@@ -8,7 +8,7 @@
 </p>
 
 ## Notice
-
+🎉🎉🎉Excited to share that our paper "LAKALMANTRACKER: ROBUST LEARNING-AIDED KALMAN FILTERING FOR MULTI-OBJECT TRACKING" has been accepted to ICASSP 2026! 🎉🎉🎉
 We will upload all the code once the paper has been accepted.
 
 
