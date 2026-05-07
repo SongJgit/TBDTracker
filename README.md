@@ -433,6 +433,18 @@ If you find this repo useful, please cite our papers.
 <a id="anchor1"></a>
 
 ```bibtex
+
+@INPROCEEDINGS{11463682,
+  author={Song, Jian and Mei, Wei and Xu, Yunfeng and Fu, Qiang and Kou, Renke and Bu, Lina and Long, Yucheng},
+  booktitle={ICASSP 2026 - 2026 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP)}, 
+  title={LAKALMANTracker: Robust Learning-Aided Kalman Filtering for Multi-Object Tracking}, 
+  year={2026},
+  volume={},
+  number={},
+  pages={3821-3825},
+  keywords={Feeds;Antennas;Kalman filters;Filters;Videos;Protocols;Video equipment;HTTP;Bot (Internet);Over-the-top media services;Model-based deep learning;Multi-object tracking;Kalman filter;KalmanNet;Motion Estimation},
+  doi={10.1109/ICASSP55912.2026.11463682}}
+
 @misc{song2025motionestimationmultiobjecttracking,
       title={Motion Estimation for Multi-Object Tracking using KalmanNet with Semantic-Independent Encoding},
       author={Jian Song and Wei Mei and Yunfeng Xu and Qiang Fu and Renke Kou and Lina Bu and Yucheng Long},
